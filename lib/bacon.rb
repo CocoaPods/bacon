@@ -27,7 +27,7 @@ module Bacon
     at_exit {
       handle_summary
       if $!
-        puts "BACON: '$!' at_exit: #{$!.inspect}"
+        puts "BACON: '$!' at_exit: #{$!.inspect}, #{$!.status}"
         raise $!
       elsif Counter[:errors] + Counter[:failed] > 0
         exit 1
