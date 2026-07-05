@@ -13,15 +13,38 @@ $debug_exit_calls = []
 $debug_at_exit_registrations = []
 
 # Catch the raise site of any SystemExit with status 15, even from C code
-# (Kernel.exit with explicit receiver, rb_exit, raise SystemExit.new(15)).
+# (Kernel.exit with explicit receiver, rb_exit, raise SystemExit.new(15)),
+# and of the Thor::UndefinedCommandError observed on CI.
 TracePoint.new(:raise) do |tp|
-  e = tp.raised_exception
-  if e.is_a?(SystemExit) && e.status == 15
-    STDERR.puts "DEBUG_TP: SystemExit(15) raised at #{tp.path}:#{tp.lineno}"
-    STDERR.puts caller.first(20).map { |l| "  #{l}" }
-    STDERR.flush
+  begin
+    e = tp.raised_exception
+    interesting =
+      (e.is_a?(SystemExit) && e.status == 15) ||
+      e.class.name.to_s.include?('UndefinedCommandError') ||
+      e.message.to_s.start_with?('Could not find command')
+    if interesting
+      STDERR.puts "DEBUG_TP[pid=#{Process.pid}]: #{e.class} (#{e.message.to_s[0, 120]}) raised at #{tp.path}:#{tp.lineno}"
+      STDERR.puts caller.first(20).map { |l| "  #{l}" }
+      STDERR.flush
+    end
+  rescue Exception
+    nil
   end
 end.enable
+
+# Log every Ruby-level fork (Kernel#fork, Process.fork, Process.daemon all
+# funnel through Process._fork on Ruby 3.1+) with its call site.
+module DebugForkTracker
+  def _fork
+    STDERR.puts "DEBUG_FORK[pid=#{Process.pid}] fork called from:"
+    STDERR.puts caller.first(12).map { |l| "  #{l}" }
+    STDERR.flush
+    child = super
+    STDERR.puts "DEBUG_FORK[pid=#{Process.pid}] -> child pid=#{child}" if child != 0
+    child
+  end
+end
+Process.singleton_class.prepend(DebugForkTracker)
 module Kernel
   alias_method :__debug_orig_exit, :exit
   private def exit(status = true)
@@ -66,7 +89,7 @@ module Bacon
     at_exit {
       handle_summary
       if $!
-        puts "BACON: '$!' at_exit: #{$!.inspect}, #{$!.status rescue nil}"
+        puts "BACON[pid=#{Process.pid}]: '$!' at_exit: #{$!.inspect}, #{$!.status rescue nil}"
         puts "BACON: raised at:"
         ($!.backtrace || ['<no backtrace>']).first(30).each { |l| puts "  #{l}" }
         puts "BACON: exit() calls seen (#{$debug_exit_calls.size}):"
