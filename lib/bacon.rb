@@ -7,6 +7,34 @@
 # Bacon is freely distributable under the terms of an MIT-style license.
 # See COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+# DEBUG: record every exit() call and at_exit registration with its caller,
+# dumped from Bacon's summary hook to find who raises SystemExit(15).
+$debug_exit_calls = []
+$debug_at_exit_registrations = []
+module Kernel
+  alias_method :__debug_orig_exit, :exit
+  private def exit(status = true)
+    $debug_exit_calls << [status, caller.first(10)]
+    __debug_orig_exit(status)
+  end
+
+  alias_method :__debug_orig_at_exit, :at_exit
+  private def at_exit(&block)
+    $debug_at_exit_registrations << caller.first(6)
+    __debug_orig_at_exit(&block)
+  end
+end
+
+module Process
+  class << self
+    alias_method :__debug_orig_exit, :exit
+    def exit(status = true)
+      $debug_exit_calls << [status, caller.first(10)]
+      __debug_orig_exit(status)
+    end
+  end
+end
+
 module Bacon
   VERSION = "1.2"
 
@@ -27,7 +55,18 @@ module Bacon
     at_exit {
       handle_summary
       if $!
-        puts "BACON: '$!' at_exit: #{$!.inspect}, #{$!.status}"
+        puts "BACON: '$!' at_exit: #{$!.inspect}, #{$!.status rescue nil}"
+        puts "BACON: raised at:"
+        ($!.backtrace || ['<no backtrace>']).first(30).each { |l| puts "  #{l}" }
+        puts "BACON: exit() calls seen (#{$debug_exit_calls.size}):"
+        $debug_exit_calls.last(10).each do |status, bt|
+          puts "  exit(#{status.inspect}) from:"
+          bt.each { |l| puts "    #{l}" }
+        end
+        puts "BACON: at_exit registrations (#{$debug_at_exit_registrations.size}):"
+        $debug_at_exit_registrations.each_with_index do |bt, i|
+          puts "  ##{i}: #{bt.first(3).join(' <- ')}"
+        end
         raise $!
       elsif Counter[:errors] + Counter[:failed] > 0
         exit 1
