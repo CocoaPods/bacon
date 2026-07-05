@@ -11,6 +11,17 @@
 # dumped from Bacon's summary hook to find who raises SystemExit(15).
 $debug_exit_calls = []
 $debug_at_exit_registrations = []
+
+# Catch the raise site of any SystemExit with status 15, even from C code
+# (Kernel.exit with explicit receiver, rb_exit, raise SystemExit.new(15)).
+TracePoint.new(:raise) do |tp|
+  e = tp.raised_exception
+  if e.is_a?(SystemExit) && e.status == 15
+    STDERR.puts "DEBUG_TP: SystemExit(15) raised at #{tp.path}:#{tp.lineno}"
+    STDERR.puts caller.first(20).map { |l| "  #{l}" }
+    STDERR.flush
+  end
+end.enable
 module Kernel
   alias_method :__debug_orig_exit, :exit
   private def exit(status = true)
