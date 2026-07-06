@@ -23,7 +23,7 @@ TracePoint.new(:raise) do |tp|
       e.class.name.to_s.include?('UndefinedCommandError') ||
       e.message.to_s.start_with?('Could not find command')
     if interesting
-      STDERR.puts "DEBUG_TP[pid=#{Process.pid}]: #{e.class} (#{e.message.to_s[0, 120]}) raised at #{tp.path}:#{tp.lineno}"
+      STDERR.puts "DEBUG_TP[pid=#{Process.pid} main_thread=#{Thread.current == Thread.main} threads=#{Thread.list.size}]: #{e.class} (#{e.message.to_s[0, 120]}) raised at #{tp.path}:#{tp.lineno}"
       STDERR.puts caller.first(20).map { |l| "  #{l}" }
       STDERR.flush
     end
@@ -31,6 +31,25 @@ TracePoint.new(:raise) do |tp|
     nil
   end
 end.enable
+
+# Log every load of a spec file — run4 counted 2042 specs instead of ~1997,
+# so ~45 specs were re-executed in-process. Find who re-loads them.
+$debug_spec_loads = Hash.new(0)
+module Kernel
+  alias_method :__debug_orig_load, :load
+  private def load(path, wrap = false)
+    if path.to_s.end_with?('_spec.rb')
+      count = ($debug_spec_loads[path.to_s] += 1)
+      STDERR.puts "DEBUG_LOAD[pid=#{Process.pid} main_thread=#{Thread.current == Thread.main} depth=#{caller.size} count=#{count}]: #{path}"
+      if count > 1
+        STDERR.puts "DEBUG_RELOAD backtrace:"
+        STDERR.puts caller.first(15).map { |l| "  #{l}" }
+      end
+      STDERR.flush
+    end
+    __debug_orig_load(path, wrap)
+  end
+end
 
 # Log every Ruby-level fork (Kernel#fork, Process.fork, Process.daemon all
 # funnel through Process._fork on Ruby 3.1+) with its call site.
