@@ -93,7 +93,7 @@ options = OptionParser.new("", 24, '  ') { |opts|
   opts.parse! ARGV
 }
 
-files = ARGV
+files = ARGV.dup
 
 if automatic
   files.concat Dir["test/**/test_*.rb"]
